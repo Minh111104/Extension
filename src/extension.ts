@@ -8,8 +8,16 @@ type GuideSuggestion = {
 	uri: vscode.Uri;
 };
 
+type GuideMode = 'files' | 'walkthrough' | 'all';
+
+type FileEntry = {
+	label: string;
+	uri: vscode.Uri;
+};
+
 let currentPanel: vscode.WebviewPanel | undefined;
 let highlightDecoration: vscode.TextEditorDecorationType | undefined;
+let currentMode: GuideMode = 'files';
 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
@@ -23,6 +31,12 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(highlightDecoration);
 
 	const openGuideDisposable = vscode.commands.registerCommand('codebase-guide.openGuide', async () => {
+		currentMode = 'files';
+		await openGuidePanel(context);
+	});
+
+	const walkthroughDisposable = vscode.commands.registerCommand('codebase-guide.appStructureWalkthrough', async () => {
+		currentMode = 'walkthrough';
 		await openGuidePanel(context);
 	});
 
@@ -30,7 +44,7 @@ export function activate(context: vscode.ExtensionContext) {
 		await highlightLines();
 	});
 
-	context.subscriptions.push(openGuideDisposable, highlightDisposable);
+	context.subscriptions.push(openGuideDisposable, walkthroughDisposable, highlightDisposable);
 }
 
 // This method is called when your extension is deactivated
@@ -62,6 +76,14 @@ async function openGuidePanel(context: vscode.ExtensionContext): Promise<void> {
 
 	currentPanel.webview.onDidReceiveMessage(
 		async message => {
+			if (
+				message?.command === 'setMode' &&
+				(message.mode === 'files' || message.mode === 'walkthrough' || message.mode === 'all')
+			) {
+				currentMode = message.mode;
+				await updateGuidePanel(currentPanel!);
+				return;
+			}
 			if (message?.command === 'openFile' && typeof message.path === 'string') {
 				const fileUri = vscode.Uri.file(message.path);
 				const doc = await vscode.workspace.openTextDocument(fileUri);
@@ -77,7 +99,9 @@ async function openGuidePanel(context: vscode.ExtensionContext): Promise<void> {
 
 async function updateGuidePanel(panel: vscode.WebviewPanel): Promise<void> {
 	const suggestions = await buildGuideSuggestions();
-	panel.webview.html = getGuideHtml(suggestions);
+	const frameworks = await detectFrameworks();
+	const allFiles = await buildAllFilesList();
+	panel.webview.html = getGuideHtml(suggestions, currentMode, frameworks, allFiles);
 }
 
 async function buildGuideSuggestions(): Promise<GuideSuggestion[]> {
@@ -116,7 +140,12 @@ async function buildGuideSuggestions(): Promise<GuideSuggestion[]> {
 	return suggestions;
 }
 
-function getGuideHtml(suggestions: GuideSuggestion[]): string {
+function getGuideHtml(
+	suggestions: GuideSuggestion[],
+	mode: GuideMode,
+	frameworks: string[],
+	allFiles: FileEntry[]
+): string {
 	const cards = suggestions
 		.map(suggestion => {
 			const safeLabel = escapeHtml(suggestion.label);
@@ -138,6 +167,61 @@ function getGuideHtml(suggestions: GuideSuggestion[]): string {
 		</div>
 	`;
 
+	const walkthroughSteps = buildWalkthroughSteps(suggestions, frameworks);
+	const walkthroughCards = walkthroughSteps
+		.map(step => {
+			const safeTitle = escapeHtml(step.title);
+			const safeDetails = escapeHtml(step.details);
+			const encodedPath = step.target ? encodeURIComponent(step.target.fsPath) : '';
+			const action = step.target
+				? `<button class="open-btn" data-path="${encodedPath}">Open file</button>`
+				: `<span class="muted">No file match found</span>`;
+			return `
+				<div class="card">
+					<div class="card-title">${safeTitle}</div>
+					<div class="card-reason">${safeDetails}</div>
+					${action}
+				</div>
+			`;
+		})
+		.join('');
+
+	const allFilesItems = allFiles
+		.map(entry => {
+			const safeLabel = escapeHtml(entry.label);
+			const encodedPath = encodeURIComponent(entry.uri.fsPath);
+			return `
+				<li class="file-item" data-label="${safeLabel.toLowerCase()}">
+					<span class="file-label">${safeLabel}</span>
+					<button class="open-btn" data-path="${encodedPath}">Open</button>
+				</li>
+			`;
+		})
+		.join('');
+
+	const allFilesSection = `
+		<div class="file-search">
+			<input id="fileFilter" class="input" type="text" placeholder="Filter files..." />
+			<span class="muted">${allFiles.length} files</span>
+		</div>
+		<ul class="file-list">
+			${allFilesItems || '<li class="muted">No files found.</li>'}
+		</ul>
+	`;
+
+	const isFilesMode = mode === 'files';
+	const isWalkthroughMode = mode === 'walkthrough';
+	const frameworkLine = frameworks.length
+		? `<p class="frameworks">Detected: ${frameworks.map(escapeHtml).join(', ')}</p>`
+		: `<p class="frameworks muted">Detected: none</p>`;
+	const tabs = `
+		<div class="tabs">
+			<button class="tab-btn ${isFilesMode ? 'active' : ''}" data-mode="files">File suggestions</button>
+			<button class="tab-btn ${isWalkthroughMode ? 'active' : ''}" data-mode="walkthrough">App structure walkthrough</button>
+			<button class="tab-btn ${mode === 'all' ? 'active' : ''}" data-mode="all">All files</button>
+		</div>
+	`;
+
 	return `
 		<!DOCTYPE html>
 		<html lang="en">
@@ -152,6 +236,24 @@ function getGuideHtml(suggestions: GuideSuggestion[]): string {
 					color: var(--vscode-editor-foreground);
 					background: var(--vscode-editor-background);
 				}
+				.tabs {
+					display: flex;
+					gap: 8px;
+					margin-bottom: 12px;
+				}
+				.tab-btn {
+					background: var(--vscode-editorWidget-background);
+					color: var(--vscode-editor-foreground);
+					border: 1px solid var(--vscode-editorWidget-border);
+					border-radius: 6px;
+					padding: 6px 10px;
+					cursor: pointer;
+				}
+				.tab-btn.active {
+					background: var(--vscode-button-background);
+					color: var(--vscode-button-foreground);
+					border-color: var(--vscode-button-background);
+				}
 				.header {
 					margin-bottom: 16px;
 				}
@@ -161,6 +263,11 @@ function getGuideHtml(suggestions: GuideSuggestion[]): string {
 				}
 				.header p {
 					margin: 0;
+					opacity: 0.8;
+				}
+				.frameworks {
+					margin-top: 6px;
+					font-size: 12px;
 					opacity: 0.8;
 				}
 				.grid {
@@ -197,6 +304,46 @@ function getGuideHtml(suggestions: GuideSuggestion[]): string {
 				.open-btn:hover {
 					background: var(--vscode-button-hoverBackground);
 				}
+				.input {
+					width: 100%;
+					background: var(--vscode-input-background);
+					color: var(--vscode-input-foreground);
+					border: 1px solid var(--vscode-input-border);
+					border-radius: 6px;
+					padding: 6px 8px;
+				}
+				.file-search {
+					display: flex;
+					gap: 8px;
+					align-items: center;
+					margin-bottom: 12px;
+				}
+				.file-list {
+					list-style: none;
+					padding: 0;
+					margin: 0;
+					display: flex;
+					flex-direction: column;
+					gap: 6px;
+				}
+				.file-item {
+					display: flex;
+					align-items: center;
+					justify-content: space-between;
+					gap: 12px;
+					border: 1px solid var(--vscode-editorWidget-border);
+					background: var(--vscode-editorWidget-background);
+					border-radius: 6px;
+					padding: 8px 10px;
+				}
+				.file-label {
+					font-size: 12px;
+					word-break: break-all;
+				}
+				.muted {
+					font-size: 12px;
+					opacity: 0.7;
+				}
 				.empty {
 					padding: 16px;
 					border: 1px dashed var(--vscode-editorWidget-border);
@@ -209,12 +356,21 @@ function getGuideHtml(suggestions: GuideSuggestion[]): string {
 			<div class="header">
 				<h1>Codebase Guide</h1>
 				<p>Pick a file to start learning the structure. This extension never overwrites your files.</p>
+				${frameworkLine}
 			</div>
-			<div class="grid">
-				${suggestions.length ? cards : emptyState}
-			</div>
+			${tabs}
+			${mode === 'all' ? allFilesSection : `<div class="grid">${isFilesMode ? (suggestions.length ? cards : emptyState) : walkthroughCards}</div>`}
 			<script>
 				const vscode = acquireVsCodeApi();
+				document.querySelectorAll('.tab-btn').forEach(button => {
+					button.addEventListener('click', event => {
+						const mode = event.currentTarget.getAttribute('data-mode');
+						if (!mode) {
+							return;
+						}
+						vscode.postMessage({ command: 'setMode', mode });
+					});
+				});
 				document.querySelectorAll('.open-btn').forEach(button => {
 					button.addEventListener('click', event => {
 						const path = event.currentTarget.getAttribute('data-path');
@@ -224,10 +380,321 @@ function getGuideHtml(suggestions: GuideSuggestion[]): string {
 						vscode.postMessage({ command: 'openFile', path: decodeURIComponent(path) });
 					});
 				});
+				const filterInput = document.getElementById('fileFilter');
+				if (filterInput) {
+					filterInput.addEventListener('input', event => {
+						const value = event.target.value.toLowerCase();
+						document.querySelectorAll('.file-item').forEach(item => {
+							const label = item.getAttribute('data-label') || '';
+							item.style.display = label.includes(value) ? 'flex' : 'none';
+						});
+					});
+				}
 			</script>
 		</body>
 		</html>
 	`;
+}
+
+async function buildAllFilesList(): Promise<FileEntry[]> {
+	const exclude = '**/{node_modules,.git,.vscode,.idea}/**';
+	const uris = await vscode.workspace.findFiles('**/*', exclude);
+	return uris.map(uri => ({
+		label: vscode.workspace.asRelativePath(uri),
+		uri
+	}));
+}
+
+function buildWalkthroughSteps(
+	suggestions: GuideSuggestion[],
+	frameworks: string[]
+): Array<{ title: string; details: string; target?: vscode.Uri }> {
+	const findByEndsWith = (suffixes: string[]): vscode.Uri | undefined =>
+		suggestions.find(suggestion => suffixes.some(suffix => suggestion.label.toLowerCase().endsWith(suffix)))?.uri;
+	const findByContains = (snippet: string): vscode.Uri | undefined =>
+		suggestions.find(suggestion => suggestion.label.toLowerCase().includes(snippet))?.uri;
+
+	const steps = [
+		{
+			title: 'Read the README',
+			details: 'Start with project goals, setup, and quickstart notes.',
+			target: findByEndsWith(['readme.md'])
+		},
+		{
+			title: 'Check package or build config',
+			details: 'Look for scripts, dependencies, and entry points.',
+			target: findByEndsWith(['package.json', 'pyproject.toml', 'pom.xml', 'build.gradle'])
+		}
+	];
+
+	const has = (name: string) => frameworks.includes(name);
+
+	if (has('Next.js')) {
+		steps.push(
+			{
+				title: 'Review Next.js routing',
+				details: 'Routes come from app/ or pages/ directories.',
+				target: findByEndsWith([
+					'app/layout.tsx',
+					'app/page.tsx',
+					'pages/_app.tsx',
+					'pages/index.tsx'
+				])
+			},
+			{
+				title: 'Check API routes',
+				details: 'Look under app/api or pages/api for endpoints.',
+				target: findByContains('pages/api/') ?? findByContains('app/api/')
+			}
+		);
+	}
+
+	if (has('React') && has('Vite')) {
+		steps.push(
+			{
+				title: 'Check Vite entry',
+				details: 'Vite typically starts in src/main.tsx or src/main.jsx.',
+				target: findByEndsWith(['src/main.tsx', 'src/main.jsx', 'src/main.ts', 'src/main.js'])
+			},
+			{
+				title: 'Locate the root component',
+				details: 'Trace into App.tsx or App.jsx.',
+				target: findByEndsWith(['src/App.tsx', 'src/App.jsx', 'src/App.ts', 'src/App.js'])
+			}
+		);
+	} else if (has('React')) {
+		steps.push({
+			title: 'Locate the root component',
+			details: 'Trace into App.tsx or App.jsx.',
+			target: findByEndsWith(['src/App.tsx', 'src/App.jsx', 'src/App.ts', 'src/App.js'])
+		});
+	}
+
+	if (has('Vue')) {
+		steps.push(
+			{
+				title: 'Check Vue entry',
+				details: 'Vue apps typically start in src/main.ts or src/main.js.',
+				target: findByEndsWith(['src/main.ts', 'src/main.js'])
+			},
+			{
+				title: 'Review root component',
+				details: 'Look for App.vue to understand layout and providers.',
+				target: findByEndsWith(['src/App.vue'])
+			},
+			{
+				title: 'Check routing',
+				details: 'Vue Router lives in src/router.',
+				target: findByContains('src/router/')
+			}
+		);
+	}
+
+	if (has('Angular')) {
+		steps.push(
+			{
+				title: 'Check Angular module',
+				details: 'AppModule wires components and providers.',
+				target: findByEndsWith(['src/app/app.module.ts'])
+			},
+			{
+				title: 'Check routing module',
+				details: 'Routes live in app-routing.module.ts.',
+				target: findByEndsWith(['src/app/app-routing.module.ts'])
+			}
+		);
+	}
+
+	if (has('Svelte')) {
+		steps.push(
+			{
+				title: 'Check Svelte entry',
+				details: 'SvelteKit routes live in src/routes.',
+				target: findByContains('src/routes/')
+			},
+			{
+				title: 'Check Svelte config',
+				details: 'Svelte config defines adapters and preprocessors.',
+				target: findByEndsWith(['svelte.config.js', 'svelte.config.ts'])
+			}
+		);
+	}
+
+	if (has('Astro')) {
+		steps.push(
+			{
+				title: 'Check Astro pages',
+				details: 'Astro routes live in src/pages.',
+				target: findByContains('src/pages/')
+			},
+			{
+				title: 'Check Astro config',
+				details: 'Integrations and build settings are in astro.config.*.',
+				target: findByEndsWith(['astro.config.mjs', 'astro.config.ts', 'astro.config.js'])
+			}
+		);
+	}
+
+	if (has('Nuxt')) {
+		steps.push(
+			{
+				title: 'Check Nuxt app entry',
+				details: 'Nuxt uses pages/ and app.vue for layout.',
+				target: findByEndsWith(['app.vue', 'pages/index.vue'])
+			},
+			{
+				title: 'Check Nuxt config',
+				details: 'Modules and runtime config live in nuxt.config.*.',
+				target: findByEndsWith(['nuxt.config.ts', 'nuxt.config.js', 'nuxt.config.mjs'])
+			}
+		);
+	}
+
+	if (has('NestJS')) {
+		steps.push(
+			{
+				title: 'Check NestJS entry',
+				details: 'Bootstrap happens in main.ts.',
+				target: findByEndsWith(['src/main.ts'])
+			},
+			{
+				title: 'Inspect the root module',
+				details: 'AppModule wires controllers and providers.',
+				target: findByEndsWith(['src/app.module.ts'])
+			}
+		);
+	}
+
+	if (has('Express') || has('Fastify')) {
+		steps.push(
+			{
+				title: 'Find server setup',
+				details: 'Look for app.ts/server.ts to see middleware and routes.',
+				target: findByEndsWith(['src/app.ts', 'src/server.ts', 'server.js', 'app.js'])
+			},
+			{
+				title: 'Trace route registration',
+				details: 'Routes are usually organized under src/routes.',
+				target: findByContains('src/routes/')
+			}
+		);
+	}
+
+	steps.push(
+		{
+			title: 'Find the app entry point',
+			details: 'Locate the main file that starts the app runtime.',
+			target: findByEndsWith(['src/index.ts', 'src/index.js', 'src/main.ts', 'src/main.js', 'src/app.ts', 'src/app.js', 'src/server.ts', 'src/server.js'])
+		},
+		{
+			title: 'Trace routes or pages',
+			details: 'Identify how requests or pages are registered.',
+			target: findByEndsWith(['src/routes/index.ts', 'src/routes/index.js', 'src/pages/index.tsx', 'src/pages/index.jsx'])
+		},
+		{
+			title: 'Inspect controllers or handlers',
+			details: 'See how endpoints map to logic.',
+			target: suggestions.find(suggestion => suggestion.label.toLowerCase().includes('controllers/'))?.uri
+		},
+		{
+			title: 'Follow data and services',
+			details: 'Find services, database clients, or data access layers.',
+			target: suggestions.find(suggestion => suggestion.label.toLowerCase().includes('services/'))?.uri
+		}
+	);
+
+	return steps;
+}
+
+async function detectFrameworks(): Promise<string[]> {
+	const frameworks = new Set<string>();
+	const packageJson = await readWorkspacePackageJson();
+	const deps = {
+		...(packageJson?.dependencies ?? {}),
+		...(packageJson?.devDependencies ?? {})
+	};
+
+	const hasDep = (name: string) => Object.prototype.hasOwnProperty.call(deps, name);
+
+	if (hasDep('next')) {
+		frameworks.add('Next.js');
+	}
+	if (hasDep('react')) {
+		frameworks.add('React');
+	}
+	if (hasDep('vite')) {
+		frameworks.add('Vite');
+	}
+	if (hasDep('vue')) {
+		frameworks.add('Vue');
+	}
+	if (hasDep('@angular/core')) {
+		frameworks.add('Angular');
+	}
+	if (hasDep('svelte') || hasDep('@sveltejs/kit')) {
+		frameworks.add('Svelte');
+	}
+	if (hasDep('nuxt')) {
+		frameworks.add('Nuxt');
+	}
+	if (hasDep('astro')) {
+		frameworks.add('Astro');
+	}
+	if (hasDep('@nestjs/core')) {
+		frameworks.add('NestJS');
+	}
+	if (hasDep('express')) {
+		frameworks.add('Express');
+	}
+	if (hasDep('fastify')) {
+		frameworks.add('Fastify');
+	}
+
+	if (frameworks.size > 0) {
+		return Array.from(frameworks);
+	}
+
+	const fallbackFiles = [
+		{ glob: '**/next.config.*', name: 'Next.js' },
+		{ glob: '**/vite.config.*', name: 'Vite' },
+		{ glob: '**/angular.json', name: 'Angular' },
+		{ glob: '**/svelte.config.*', name: 'Svelte' },
+		{ glob: '**/nuxt.config.*', name: 'Nuxt' },
+		{ glob: '**/astro.config.*', name: 'Astro' },
+		{ glob: '**/nest-cli.json', name: 'NestJS' }
+	];
+
+	for (const fallback of fallbackFiles) {
+		const matches = await vscode.workspace.findFiles(fallback.glob, '**/node_modules/**', 1);
+		if (matches.length) {
+			frameworks.add(fallback.name);
+		}
+	}
+
+	return Array.from(frameworks);
+}
+
+async function readWorkspacePackageJson(): Promise<
+	| { dependencies?: Record<string, string>; devDependencies?: Record<string, string> }
+	| undefined
+> {
+	const packageUris = await vscode.workspace.findFiles('**/package.json', '**/node_modules/**', 5);
+	if (!packageUris.length) {
+		return undefined;
+	}
+
+	const root = vscode.workspace.workspaceFolders?.[0];
+	const selected = root
+		? packageUris.find(uri => uri.fsPath.startsWith(root.uri.fsPath)) ?? packageUris[0]
+		: packageUris[0];
+
+	try {
+		const content = await vscode.workspace.fs.readFile(selected);
+		const json = JSON.parse(Buffer.from(content).toString('utf8'));
+		return json;
+	} catch {
+		return undefined;
+	}
 }
 
 function escapeHtml(value: string): string {
