@@ -5,17 +5,20 @@ Codebase Guide helps vibe coders learn unfamiliar projects without overwriting f
 ## Features
 
 - Open a learning guide panel with recommended files and reasons.
+- App structure walkthrough adapts to detected frameworks.
 - Jump to files like README, entry points, routes, and controllers.
+- Browse all files with a searchable list.
 - Highlight specific lines or ranges in the active editor.
 
 ## Commands
 
 - Codebase Guide: Open Learning Guide
+- Codebase Guide: App Structure Walkthrough
 - Codebase Guide: Highlight Lines
 
 ## Usage
 
-1. Run the guide command to see suggested files.
+1. Run the guide command to see suggested files or the walkthrough tab.
 2. Click a file card to open it.
 3. Use the highlight command and enter a range such as 12-20.
 
