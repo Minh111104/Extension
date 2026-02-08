@@ -11,7 +11,8 @@
   ],
   "activationEvents": [
     "onCommand:codebase-guide.openGuide",
-    "onCommand:codebase-guide.highlightLines"
+    "onCommand:codebase-guide.highlightLines",
+    "onCommand:codebase-guide.appStructureWalkthrough"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -23,6 +24,10 @@
       {
         "command": "codebase-guide.highlightLines",
         "title": "Codebase Guide: Highlight Lines"
+      },
+      {
+        "command": "codebase-guide.appStructureWalkthrough",
+        "title": "Codebase Guide: App Structure Walkthrough"
       }
     ]
   },
