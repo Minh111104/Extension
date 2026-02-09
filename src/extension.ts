@@ -15,9 +15,26 @@ type FileEntry = {
 	uri: vscode.Uri;
 };
 
+type SummaryInfo = {
+	filePath: string;
+	relativePath: string;
+	lineCount: number;
+	headings: string[];
+	exports: string[];
+	functions: Array<{ name: string; line: number }>;
+};
+
+type NextResponse = {
+	question: string;
+	message: string;
+	suggestions: GuideSuggestion[];
+};
+
 let currentPanel: vscode.WebviewPanel | undefined;
 let highlightDecoration: vscode.TextEditorDecorationType | undefined;
 let currentMode: GuideMode = 'files';
+let currentSummary: SummaryInfo | undefined;
+let nextResponse: NextResponse | undefined;
 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
@@ -84,10 +101,20 @@ async function openGuidePanel(context: vscode.ExtensionContext): Promise<void> {
 				await updateGuidePanel(currentPanel!);
 				return;
 			}
+			if (message?.command === 'learnFile' && typeof message.path === 'string') {
+				await learnFile(message.path);
+				await updateGuidePanel(currentPanel!);
+				return;
+			}
 			if (message?.command === 'openFile' && typeof message.path === 'string') {
 				const fileUri = vscode.Uri.file(message.path);
 				const doc = await vscode.workspace.openTextDocument(fileUri);
 				await vscode.window.showTextDocument(doc, { preview: false });
+				return;
+			}
+			if (message?.command === 'askNext' && typeof message.text === 'string') {
+				nextResponse = buildNextResponse(message.text, await buildGuideSuggestions(), currentSummary);
+				await updateGuidePanel(currentPanel!);
 			}
 		},
 		undefined,
@@ -101,7 +128,7 @@ async function updateGuidePanel(panel: vscode.WebviewPanel): Promise<void> {
 	const suggestions = await buildGuideSuggestions();
 	const frameworks = await detectFrameworks();
 	const allFiles = await buildAllFilesList();
-	panel.webview.html = getGuideHtml(suggestions, currentMode, frameworks, allFiles);
+	panel.webview.html = getGuideHtml(suggestions, currentMode, frameworks, allFiles, currentSummary, nextResponse);
 }
 
 async function buildGuideSuggestions(): Promise<GuideSuggestion[]> {
@@ -144,7 +171,9 @@ function getGuideHtml(
 	suggestions: GuideSuggestion[],
 	mode: GuideMode,
 	frameworks: string[],
-	allFiles: FileEntry[]
+	allFiles: FileEntry[],
+	summary: SummaryInfo | undefined,
+	response: NextResponse | undefined
 ): string {
 	const cards = suggestions
 		.map(suggestion => {
@@ -155,7 +184,7 @@ function getGuideHtml(
 				<div class="card">
 					<div class="card-title">${safeLabel}</div>
 					<div class="card-reason">${safeReason}</div>
-					<button class="open-btn" data-path="${encodedPath}">Open file</button>
+					<button class="open-btn" data-path="${encodedPath}">Learn file</button>
 				</div>
 			`;
 		})
@@ -174,7 +203,7 @@ function getGuideHtml(
 			const safeDetails = escapeHtml(step.details);
 			const encodedPath = step.target ? encodeURIComponent(step.target.fsPath) : '';
 			const action = step.target
-				? `<button class="open-btn" data-path="${encodedPath}">Open file</button>`
+				? `<button class="open-btn" data-path="${encodedPath}">Learn file</button>`
 				: `<span class="muted">No file match found</span>`;
 			return `
 				<div class="card">
@@ -193,7 +222,7 @@ function getGuideHtml(
 			return `
 				<li class="file-item" data-label="${safeLabel.toLowerCase()}">
 					<span class="file-label">${safeLabel}</span>
-					<button class="open-btn" data-path="${encodedPath}">Open</button>
+					<button class="open-btn" data-path="${encodedPath}">Learn</button>
 				</li>
 			`;
 		})
@@ -209,16 +238,51 @@ function getGuideHtml(
 		</ul>
 	`;
 
-	const isFilesMode = mode === 'files';
-	const isWalkthroughMode = mode === 'walkthrough';
 	const frameworkLine = frameworks.length
 		? `<p class="frameworks">Detected: ${frameworks.map(escapeHtml).join(', ')}</p>`
 		: `<p class="frameworks muted">Detected: none</p>`;
-	const tabs = `
-		<div class="tabs">
-			<button class="tab-btn ${isFilesMode ? 'active' : ''}" data-mode="files">File suggestions</button>
-			<button class="tab-btn ${isWalkthroughMode ? 'active' : ''}" data-mode="walkthrough">App structure walkthrough</button>
-			<button class="tab-btn ${mode === 'all' ? 'active' : ''}" data-mode="all">All files</button>
+
+	const summarySection = summary
+		? `
+			<div class="summary">
+				<h2>Learning: ${escapeHtml(summary.relativePath)}</h2>
+				<div class="summary-meta">${summary.lineCount} lines</div>
+				${summary.headings.length ? `<div class="summary-block"><strong>Headings:</strong> ${summary.headings.map(escapeHtml).join(', ')}</div>` : ''}
+				${summary.exports.length ? `<div class="summary-block"><strong>Exports:</strong> ${summary.exports.map(escapeHtml).join(', ')}</div>` : ''}
+				${summary.functions.length ? `<div class="summary-block"><strong>Key functions:</strong> ${summary.functions.map(item => `${escapeHtml(item.name)} (L${item.line})`).join(', ')}</div>` : ''}
+			</div>
+		`
+		: `
+			<div class="summary empty">
+				Choose a file to learn and the summary will show here.
+			</div>
+		`;
+
+	const nextSection = `
+		<div class="next">
+			<h2>What do you want to learn next?</h2>
+			<div class="next-input">
+				<input id="nextQuestion" class="input" type="text" placeholder="e.g. How is routing handled?" />
+				<button id="askNextBtn" class="open-btn">Ask</button>
+			</div>
+			${
+				response
+					? `<div class="summary-block"><strong>You asked:</strong> ${escapeHtml(response.question)}</div>
+					   <div class="summary-block">${escapeHtml(response.message)}</div>
+					   <div class="grid">${response.suggestions
+								.map(item => {
+									const encodedPath = encodeURIComponent(item.uri.fsPath);
+									return `
+										<div class="card">
+											<div class="card-title">${escapeHtml(item.label)}</div>
+											<div class="card-reason">${escapeHtml(item.reason)}</div>
+											<button class="open-btn" data-path="${encodedPath}">Learn file</button>
+										</div>
+									`;
+								})
+								.join('')}</div>`
+					: '<div class="summary-block muted">Ask a question to get suggested next files.</div>'
+			}
 		</div>
 	`;
 
@@ -235,24 +299,6 @@ function getGuideHtml(
 					padding: 16px;
 					color: var(--vscode-editor-foreground);
 					background: var(--vscode-editor-background);
-				}
-				.tabs {
-					display: flex;
-					gap: 8px;
-					margin-bottom: 12px;
-				}
-				.tab-btn {
-					background: var(--vscode-editorWidget-background);
-					color: var(--vscode-editor-foreground);
-					border: 1px solid var(--vscode-editorWidget-border);
-					border-radius: 6px;
-					padding: 6px 10px;
-					cursor: pointer;
-				}
-				.tab-btn.active {
-					background: var(--vscode-button-background);
-					color: var(--vscode-button-foreground);
-					border-color: var(--vscode-button-background);
 				}
 				.header {
 					margin-bottom: 16px;
@@ -340,6 +386,39 @@ function getGuideHtml(
 					font-size: 12px;
 					word-break: break-all;
 				}
+				.summary {
+					border: 1px solid var(--vscode-editorWidget-border);
+					background: var(--vscode-editorWidget-background);
+					border-radius: 8px;
+					padding: 12px;
+					margin-bottom: 16px;
+				}
+				.summary h2 {
+					margin: 0 0 6px;
+					font-size: 16px;
+				}
+				.summary-meta {
+					font-size: 12px;
+					opacity: 0.7;
+					margin-bottom: 8px;
+				}
+				.summary-block {
+					font-size: 12px;
+					margin-top: 6px;
+				}
+				.next {
+					margin-top: 16px;
+				}
+				.next h2 {
+					margin: 0 0 8px;
+					font-size: 16px;
+				}
+				.next-input {
+					display: flex;
+					gap: 8px;
+					align-items: center;
+					margin-bottom: 10px;
+				}
 				.muted {
 					font-size: 12px;
 					opacity: 0.7;
@@ -358,28 +437,47 @@ function getGuideHtml(
 				<p>Pick a file to start learning the structure. This extension never overwrites your files.</p>
 				${frameworkLine}
 			</div>
-			${tabs}
-			${mode === 'all' ? allFilesSection : `<div class="grid">${isFilesMode ? (suggestions.length ? cards : emptyState) : walkthroughCards}</div>`}
+			${summarySection}
+			${nextSection}
+			<div class="grid">
+				<div>
+					<h2>Suggested files</h2>
+					<div class="grid">
+						${suggestions.length ? cards : emptyState}
+					</div>
+				</div>
+				<div>
+					<h2>App structure walkthrough</h2>
+					<div class="grid">
+						${walkthroughCards}
+					</div>
+				</div>
+				<div>
+					<h2>All files</h2>
+					${allFilesSection}
+				</div>
+			</div>
 			<script>
 				const vscode = acquireVsCodeApi();
-				document.querySelectorAll('.tab-btn').forEach(button => {
-					button.addEventListener('click', event => {
-						const mode = event.currentTarget.getAttribute('data-mode');
-						if (!mode) {
-							return;
-						}
-						vscode.postMessage({ command: 'setMode', mode });
-					});
-				});
 				document.querySelectorAll('.open-btn').forEach(button => {
 					button.addEventListener('click', event => {
 						const path = event.currentTarget.getAttribute('data-path');
 						if (!path) {
 							return;
 						}
-						vscode.postMessage({ command: 'openFile', path: decodeURIComponent(path) });
+						vscode.postMessage({ command: 'learnFile', path: decodeURIComponent(path) });
 					});
 				});
+				const askBtn = document.getElementById('askNextBtn');
+				if (askBtn) {
+					askBtn.addEventListener('click', () => {
+						const input = document.getElementById('nextQuestion');
+						if (!input || !input.value.trim()) {
+							return;
+						}
+						vscode.postMessage({ command: 'askNext', text: input.value.trim() });
+					});
+				}
 				const filterInput = document.getElementById('fileFilter');
 				if (filterInput) {
 					filterInput.addEventListener('input', event => {
@@ -403,6 +501,112 @@ async function buildAllFilesList(): Promise<FileEntry[]> {
 		label: vscode.workspace.asRelativePath(uri),
 		uri
 	}));
+}
+
+async function learnFile(filePath: string): Promise<void> {
+	const fileUri = vscode.Uri.file(filePath);
+	const doc = await vscode.workspace.openTextDocument(fileUri);
+	const editor = await vscode.window.showTextDocument(doc, { preview: false });
+	currentSummary = analyzeDocument(doc);
+	nextResponse = undefined;
+
+	if (highlightDecoration) {
+		const ranges = currentSummary.functions.map(item => new vscode.Range(item.line - 1, 0, item.line - 1, 0));
+		editor.setDecorations(highlightDecoration, ranges);
+		if (ranges.length) {
+			editor.revealRange(ranges[0], vscode.TextEditorRevealType.InCenter);
+		}
+	}
+}
+
+function analyzeDocument(doc: vscode.TextDocument): SummaryInfo {
+	const headings: string[] = [];
+	const exports: string[] = [];
+	const functions: Array<{ name: string; line: number }> = [];
+	const isMarkdown = doc.languageId === 'markdown' || doc.fileName.toLowerCase().endsWith('.md');
+
+	for (let i = 0; i < doc.lineCount; i += 1) {
+		const lineText = doc.lineAt(i).text;
+
+		if (isMarkdown) {
+			const headingMatch = lineText.match(/^#{1,3}\s+(.*)$/);
+			if (headingMatch && headings.length < 5) {
+				headings.push(headingMatch[1].trim());
+			}
+		}
+
+		const exportMatch = lineText.match(/^\s*export\s+(?:default\s+)?(?:class|function|const|let|var|interface|type|enum)?\s*([A-Za-z0-9_]+)/);
+		if (exportMatch && exportMatch[1] && exports.length < 8) {
+			exports.push(exportMatch[1]);
+		}
+
+		const functionMatch = lineText.match(/^\s{0,2}(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_]+)/);
+		if (functionMatch && functionMatch[1]) {
+			functions.push({ name: functionMatch[1], line: i + 1 });
+			continue;
+		}
+
+		const classMatch = lineText.match(/^\s{0,2}(?:export\s+)?class\s+([A-Za-z0-9_]+)/);
+		if (classMatch && classMatch[1]) {
+			functions.push({ name: classMatch[1], line: i + 1 });
+			continue;
+		}
+
+		const arrowMatch = lineText.match(/^\s{0,2}(?:export\s+)?const\s+([A-Za-z0-9_]+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>/);
+		if (arrowMatch && arrowMatch[1]) {
+			functions.push({ name: arrowMatch[1], line: i + 1 });
+		}
+	}
+
+	const uniqueExports = Array.from(new Set(exports));
+	const uniqueFunctions = functions.filter(
+		(item, index, array) => array.findIndex(entry => entry.name === item.name) === index
+	);
+
+	return {
+		filePath: doc.uri.fsPath,
+		relativePath: vscode.workspace.asRelativePath(doc.uri),
+		lineCount: doc.lineCount,
+		headings,
+		exports: uniqueExports,
+		functions: uniqueFunctions
+	};
+}
+
+function buildNextResponse(
+	question: string,
+	suggestions: GuideSuggestion[],
+	current: SummaryInfo | undefined
+): NextResponse {
+	const lower = question.toLowerCase();
+	let message = 'Here are some suggested next files to explore.';
+
+	const matches = (needle: string) => lower.includes(needle);
+	let filtered = suggestions;
+
+	if (matches('route') || matches('endpoint') || matches('api')) {
+		message = 'Start with route registration or endpoint handlers.';
+		filtered = suggestions.filter(item => /routes|controllers|pages|api/i.test(item.label));
+	} else if (matches('data') || matches('db') || matches('database') || matches('model')) {
+		message = 'Look for data access or service layers.';
+		filtered = suggestions.filter(item => /services|models|db|database/i.test(item.label));
+	} else if (matches('ui') || matches('component') || matches('page')) {
+		message = 'Check UI entry points and pages.';
+		filtered = suggestions.filter(item => /pages|components|views/i.test(item.label));
+	} else if (matches('config') || matches('setup')) {
+		message = 'Check configuration and setup files.';
+		filtered = suggestions.filter(item => /config|package.json|settings/i.test(item.label));
+	}
+
+	if (current) {
+		filtered = filtered.filter(item => item.label !== current.relativePath);
+	}
+
+	return {
+		question,
+		message,
+		suggestions: filtered.slice(0, 6)
+	};
 }
 
 function buildWalkthroughSteps(
