@@ -27,7 +27,7 @@ type SummaryInfo = {
 type NextResponse = {
 	question: string;
 	message: string;
-	suggestions: GuideSuggestion[];
+	evidence: Array<{ line: number; text: string }>;
 };
 
 let currentPanel: vscode.WebviewPanel | undefined;
@@ -35,6 +35,7 @@ let highlightDecoration: vscode.TextEditorDecorationType | undefined;
 let currentMode: GuideMode = 'files';
 let currentSummary: SummaryInfo | undefined;
 let nextResponse: NextResponse | undefined;
+let currentLearnedUri: vscode.Uri | undefined;
 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
@@ -113,7 +114,18 @@ async function openGuidePanel(context: vscode.ExtensionContext): Promise<void> {
 				return;
 			}
 			if (message?.command === 'askNext' && typeof message.text === 'string') {
-				nextResponse = buildNextResponse(message.text, await buildGuideSuggestions(), currentSummary);
+				const doc = currentLearnedUri
+					? await vscode.workspace.openTextDocument(currentLearnedUri)
+					: undefined;
+				nextResponse = buildNextResponse(message.text, doc, currentSummary);
+				if (doc && highlightDecoration && nextResponse?.evidence.length) {
+					const ranges = nextResponse.evidence.map(item => new vscode.Range(item.line - 1, 0, item.line - 1, 0));
+					const editor = vscode.window.visibleTextEditors.find(e => e.document.uri.fsPath === doc.uri.fsPath);
+					if (editor) {
+						editor.setDecorations(highlightDecoration, ranges);
+						editor.revealRange(ranges[0], vscode.TextEditorRevealType.InCenter);
+					}
+				}
 				await updateGuidePanel(currentPanel!);
 			}
 		},
@@ -269,19 +281,17 @@ function getGuideHtml(
 				response
 					? `<div class="summary-block"><strong>You asked:</strong> ${escapeHtml(response.question)}</div>
 					   <div class="summary-block">${escapeHtml(response.message)}</div>
-					   <div class="grid">${response.suggestions
-								.map(item => {
-									const encodedPath = encodeURIComponent(item.uri.fsPath);
-									return `
-										<div class="card">
-											<div class="card-title">${escapeHtml(item.label)}</div>
-											<div class="card-reason">${escapeHtml(item.reason)}</div>
-											<button class="open-btn" data-path="${encodedPath}">Learn file</button>
-										</div>
-									`;
-								})
-								.join('')}</div>`
-					: '<div class="summary-block muted">Ask a question to get suggested next files.</div>'
+					   ${response.evidence.length ? `
+						<div class="evidence">
+							<strong>Supporting lines:</strong>
+							<ul>
+								${response.evidence
+									.map(item => `<li>L${item.line}: ${escapeHtml(item.text)}</li>`)
+									.join('')}
+							</ul>
+						</div>
+					` : '<div class="summary-block muted">No direct matches found in the current file.</div>'}`
+					: '<div class="summary-block muted">Ask a question to get evidence from the current file.</div>'
 			}
 		</div>
 	`;
@@ -406,6 +416,17 @@ function getGuideHtml(
 					font-size: 12px;
 					margin-top: 6px;
 				}
+				.evidence {
+					margin-top: 8px;
+					font-size: 12px;
+				}
+				.evidence ul {
+					margin: 6px 0 0;
+					padding-left: 18px;
+				}
+				.evidence li {
+					margin-bottom: 4px;
+				}
 				.next {
 					margin-top: 16px;
 				}
@@ -509,6 +530,7 @@ async function learnFile(filePath: string): Promise<void> {
 	const editor = await vscode.window.showTextDocument(doc, { preview: false });
 	currentSummary = analyzeDocument(doc);
 	nextResponse = undefined;
+	currentLearnedUri = doc.uri;
 
 	if (highlightDecoration) {
 		const ranges = currentSummary.functions.map(item => new vscode.Range(item.line - 1, 0, item.line - 1, 0));
@@ -575,38 +597,80 @@ function analyzeDocument(doc: vscode.TextDocument): SummaryInfo {
 
 function buildNextResponse(
 	question: string,
-	suggestions: GuideSuggestion[],
+	doc: vscode.TextDocument | undefined,
 	current: SummaryInfo | undefined
 ): NextResponse {
-	const lower = question.toLowerCase();
-	let message = 'Here are some suggested next files to explore.';
+	const evidence: Array<{ line: number; text: string }> = [];
+	const normalized = question.toLowerCase();
+	const isHtml = doc?.languageId === 'html' || doc?.fileName.toLowerCase().endsWith('.html');
+	const isCss = doc?.languageId === 'css' || doc?.fileName.toLowerCase().endsWith('.css');
+	const tokens = normalized
+		.split(/\W+/)
+		.map(token => token.trim())
+		.filter(token => token.length > 3);
+	const stopwords = new Set(['what', 'which', 'where', 'when', 'then', 'this', 'that', 'with', 'from', 'have', 'your', 'about']);
+	const keywords = tokens.filter(token => !stopwords.has(token));
+	const classQuery = extractNamedQuery(normalized, 'class');
+	const idQuery = extractNamedQuery(normalized, 'id');
+	const selectorQuery = classQuery ? `.${classQuery}` : idQuery ? `#${idQuery}` : undefined;
 
-	const matches = (needle: string) => lower.includes(needle);
-	let filtered = suggestions;
+	if (doc) {
+		if ((isHtml || isCss) && (classQuery || idQuery)) {
+			for (let i = 0; i < doc.lineCount; i += 1) {
+				const lineText = doc.lineAt(i).text;
+				const lowerLine = lineText.toLowerCase();
+				if (isHtml) {
+					if (classQuery && lowerLine.includes('class=') && lowerLine.includes(classQuery)) {
+						evidence.push({ line: i + 1, text: lineText.trim() });
+					} else if (idQuery && lowerLine.includes('id=') && lowerLine.includes(idQuery)) {
+						evidence.push({ line: i + 1, text: lineText.trim() });
+					}
+				} else if (isCss && selectorQuery && lowerLine.includes(selectorQuery)) {
+					evidence.push({ line: i + 1, text: lineText.trim() });
+				}
+				if (evidence.length >= 6) {
+					break;
+				}
+			}
+		}
 
-	if (matches('route') || matches('endpoint') || matches('api')) {
-		message = 'Start with route registration or endpoint handlers.';
-		filtered = suggestions.filter(item => /routes|controllers|pages|api/i.test(item.label));
-	} else if (matches('data') || matches('db') || matches('database') || matches('model')) {
-		message = 'Look for data access or service layers.';
-		filtered = suggestions.filter(item => /services|models|db|database/i.test(item.label));
-	} else if (matches('ui') || matches('component') || matches('page')) {
-		message = 'Check UI entry points and pages.';
-		filtered = suggestions.filter(item => /pages|components|views/i.test(item.label));
-	} else if (matches('config') || matches('setup')) {
-		message = 'Check configuration and setup files.';
-		filtered = suggestions.filter(item => /config|package.json|settings/i.test(item.label));
+		for (let i = 0; i < doc.lineCount; i += 1) {
+			const lineText = doc.lineAt(i).text;
+			const lowerLine = lineText.toLowerCase();
+			if (evidence.length >= 6) {
+				break;
+			}
+			if (keywords.some(keyword => lowerLine.includes(keyword))) {
+				evidence.push({ line: i + 1, text: lineText.trim() });
+			}
+		}
 	}
 
-	if (current) {
-		filtered = filtered.filter(item => item.label !== current.relativePath);
+	let message = 'Here are the lines in this file that best match your question.';
+	if (classQuery) {
+		message = `Matching class "${classQuery}" in this file.`;
+	} else if (idQuery) {
+		message = `Matching id "${idQuery}" in this file.`;
+	}
+	if (!doc || !evidence.length) {
+		message = 'I could not find matching lines in the current file. Try a different question or choose another file.';
+	}
+
+	if (current && current.functions.length && !evidence.length) {
+		message = `I could not find direct matches, but this file has ${current.functions.length} key functions you can explore.`;
 	}
 
 	return {
 		question,
 		message,
-		suggestions: filtered.slice(0, 6)
+		evidence
 	};
+}
+
+function extractNamedQuery(input: string, keyword: 'class' | 'id'): string | undefined {
+	const pattern = new RegExp(`${keyword}\\s*[:=]?\\s*['\"]?([a-zA-Z0-9_-]+)['\"]?`);
+	const match = input.match(pattern);
+	return match?.[1];
 }
 
 function buildWalkthroughSteps(
