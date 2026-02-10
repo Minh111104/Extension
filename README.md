@@ -8,7 +8,7 @@ Codebase Guide helps vibe coders learn unfamiliar projects without overwriting f
 - App structure walkthrough adapts to detected frameworks.
 - Jump to files like README, entry points, routes, and controllers.
 - Browse all files with a searchable list.
-- Learn a file to see a summary, auto-highlight key code, and ask what to explore next.
+- Learn a file to see a summary, auto-highlight key code, and ask a question to highlight supporting lines.
 - Highlight specific lines or ranges in the active editor.
 
 ## Commands
