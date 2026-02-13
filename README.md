@@ -28,6 +28,7 @@ No additional requirements.
 ## Known Issues
 
 Suggestions are heuristics and may not cover every project layout.
+Suggestions do not automatically trigger code hightlighting.
 
 ## Release Notes
 
