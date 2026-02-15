@@ -10,24 +10,14 @@
     "Other"
   ],
   "activationEvents": [
-    "onCommand:codebase-guide.openGuide",
-    "onCommand:codebase-guide.highlightLines",
-    "onCommand:codebase-guide.appStructureWalkthrough"
+    "onCommand:codebase-guide.start"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "codebase-guide.openGuide",
-        "title": "Codebase Guide: Open Learning Guide"
-      },
-      {
-        "command": "codebase-guide.highlightLines",
-        "title": "Codebase Guide: Highlight Lines"
-      },
-      {
-        "command": "codebase-guide.appStructureWalkthrough",
-        "title": "Codebase Guide: App Structure Walkthrough"
+        "command": "codebase-guide.start",
+        "title": "Codebase Guide: Start"
       }
     ]
   },
