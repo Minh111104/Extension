@@ -4,22 +4,24 @@ Codebase Guide helps vibe coders learn unfamiliar projects without overwriting f
 
 ## Features
 
-- Open a learning guide panel with recommended files and reasons.
-- App structure walkthrough adapts to detected frameworks.
-- Browse all files with a searchable list.
-- Learn a file to see a summary, auto-highlight key code, and ask a question to highlight supporting lines.
+- Single guided flow: select a file, see its summary, ask questions, get next suggestions.
+- Unified file selection combining suggested files and framework-aware walkthrough steps.
+- Browse all workspace files with a searchable list.
+- Learn a file to see exports, functions, and headings with clickable jump-to-line links.
+- Ask questions to highlight matching lines in the editor with explanations.
+- Get "Explore Next" suggestions based on imports, walkthrough steps, and unexplored files.
 
 ## Commands
 
-- Codebase Guide: Open Learning Guide
-- Codebase Guide: App Structure Walkthrough
-- Codebase Guide: Highlight Lines
+- Codebase Guide: Start
 
 ## Usage
 
-1. Run the guide command to see suggested files or the walkthrough tab.
-2. Click a file card to open it.
-3. Use the highlight command and enter a range such as 12-20.
+1. Run "Codebase Guide: Start" to open the guide panel.
+2. Select a file from suggestions or the file list.
+3. Review the file summary — click function names to jump to their lines.
+4. Ask a question to highlight relevant lines in the editor.
+5. Follow "Explore Next" suggestions to continue learning the codebase.
 
 ## Requirements
 
