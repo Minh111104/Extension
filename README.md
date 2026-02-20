@@ -26,12 +26,6 @@ Codebase Guide helps vibe coders learn unfamiliar projects without overwriting f
 ## Requirements
 
 No additional requirements.
-
-## Known Issues
-
-Suggestions are heuristics and may not cover every project layout.
-Suggestions do not automatically trigger code hightlighting.
-
 ## Release Notes
 
 ### 0.0.1
