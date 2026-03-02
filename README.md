@@ -23,9 +23,6 @@ Codebase Guide helps vibe coders learn unfamiliar projects without overwriting f
 4. Ask a question to highlight relevant lines in the editor.
 5. Follow "Explore Next" suggestions to continue learning the codebase.
 
-## Requirements
-
-No additional requirements.
 ## Release Notes
 
 ### 0.0.1
