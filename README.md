@@ -1,4 +1,4 @@
-# Codebase Guide
+# Codebase Guide 💡
 
 Codebase Guide helps vibe coders learn unfamiliar projects without overwriting files. It suggests key files to explore and can highlight specific lines on request.
 
