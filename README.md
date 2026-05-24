@@ -28,3 +28,6 @@ Codebase Guide helps vibe coders learn unfamiliar projects without overwriting f
 ### 0.0.1
 
 Initial preview with guidance panel and line highlighting.
+
+## License
+This project is created for educational purpose.
