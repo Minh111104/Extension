@@ -25,8 +25,6 @@ Codebase Guide helps vibe coders learn unfamiliar projects without overwriting f
 
 ## Release Notes
 
-### 0.0.1
-
 Initial preview with guidance panel and line highlighting.
 
 ## License
