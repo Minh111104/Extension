@@ -19,6 +19,13 @@
         "command": "codebase-guide.start",
         "title": "Codebase Guide: Start"
       }
+    ],
+    "keybindings": [
+      {
+        "command": "codebase-guide.start",
+        "key": "ctrl+shift+g",
+        "mac": "cmd+shift+g"
+      }
     ]
   },
   "scripts": {
