@@ -84,14 +84,22 @@ async function openGuidePanel(context: vscode.ExtensionContext): Promise<void> {
 	currentPanel.webview.onDidReceiveMessage(
 		async message => {
 			if (message?.command === 'learnFile' && typeof message.path === 'string') {
-				await learnFile(message.path);
-				await updateGuidePanel(currentPanel!);
+				try {
+					await learnFile(message.path);
+					await updateGuidePanel(currentPanel!);
+				} catch {
+					vscode.window.showErrorMessage(`Codebase Guide: Could not open file "${message.path}". It may have been moved or deleted.`);
+				}
 				return;
 			}
 			if (message?.command === 'openFile' && typeof message.path === 'string') {
-				const fileUri = vscode.Uri.file(message.path);
-				const doc = await vscode.workspace.openTextDocument(fileUri);
-				await vscode.window.showTextDocument(doc, { preview: false });
+				try {
+					const fileUri = vscode.Uri.file(message.path);
+					const doc = await vscode.workspace.openTextDocument(fileUri);
+					await vscode.window.showTextDocument(doc, { preview: false });
+				} catch {
+					vscode.window.showErrorMessage(`Codebase Guide: Could not open file "${message.path}". It may have been moved or deleted.`);
+				}
 				return;
 			}
 			if (message?.command === 'jumpToLine' && typeof message.path === 'string' && typeof message.line === 'number') {
@@ -148,7 +156,14 @@ async function buildGuideSuggestions(): Promise<GuideSuggestion[]> {
 		{ glob: '**/src/server.*', reason: 'HTTP server or runtime bootstrap.' },
 		{ glob: '**/src/routes/**', reason: 'Route definitions and endpoints.' },
 		{ glob: '**/src/controllers/**', reason: 'Endpoint handlers and business logic.' },
-		{ glob: '**/src/pages/**', reason: 'UI routes or page-level components.' }
+		{ glob: '**/src/pages/**', reason: 'UI routes or page-level components.' },
+		{ glob: '**/main.py', reason: 'Python application entry point.' },
+		{ glob: '**/manage.py', reason: 'Django project manager.' },
+		{ glob: '**/main.go', reason: 'Go application entry point.' },
+		{ glob: '**/src/main.rs', reason: 'Rust application entry point.' },
+		{ glob: '**/Cargo.toml', reason: 'Rust build config and dependencies.' },
+		{ glob: '**/go.mod', reason: 'Go module definition.' },
+		{ glob: '**/requirements.txt', reason: 'Python package dependencies.' }
 	];
 
 	const exclude = '**/node_modules/**';
@@ -221,6 +236,10 @@ async function buildNextSuggestions(
 		// couldn't read file
 	}
 
+	if (result.length >= 6) {
+		return result;
+	}
+
 	// 2. If current file is in a walkthrough step, suggest the next step
 	const currentFsPath = currentUri.fsPath;
 	const stepIndex = walkthroughSteps.findIndex(s => s.target?.fsPath === currentFsPath);
@@ -237,6 +256,10 @@ async function buildNextSuggestions(
 				break;
 			}
 		}
+	}
+
+	if (result.length >= 6) {
+		return result;
 	}
 
 	// 3. Suggest files from buildGuideSuggestions that haven't been learned
@@ -391,6 +414,7 @@ function getGuideHtml(
 		<html lang="en">
 		<head>
 			<meta charset="UTF-8" />
+			<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';" />
 			<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 			<title>Codebase Guide</title>
 			<style>
@@ -650,7 +674,7 @@ function getGuideHtml(
 
 async function buildAllFilesList(): Promise<FileEntry[]> {
 	const exclude = '**/{node_modules,.git,.vscode,.idea}/**';
-	const uris = await vscode.workspace.findFiles('**/*', exclude);
+	const uris = await vscode.workspace.findFiles('**/*', exclude, 2000);
 	return uris.map(uri => ({
 		label: vscode.workspace.asRelativePath(uri),
 		uri
@@ -667,6 +691,7 @@ async function learnFile(filePath: string): Promise<void> {
 	learnedFiles.add(doc.uri.fsPath);
 
 	if (highlightDecoration) {
+		vscode.window.visibleTextEditors.forEach(e => e.setDecorations(highlightDecoration!, []));
 		const ranges = currentSummary.functions.map(item => new vscode.Range(item.line - 1, 0, item.line - 1, 0));
 		editor.setDecorations(highlightDecoration, ranges);
 		if (ranges.length) {
@@ -748,6 +773,8 @@ function buildNextResponse(
 	const idQuery = extractNamedQuery(normalized, 'id');
 	const selectorQuery = classQuery ? `.${classQuery}` : idQuery ? `#${idQuery}` : undefined;
 
+	const addedLines = new Set<number>();
+
 	if (doc) {
 		if ((isHtml || isCss) && (classQuery || idQuery)) {
 			for (let i = 0; i < doc.lineCount; i += 1) {
@@ -755,11 +782,14 @@ function buildNextResponse(
 				const lowerLine = lineText.toLowerCase();
 				if (isHtml) {
 					if (classQuery && lowerLine.includes('class=') && lowerLine.includes(classQuery)) {
+						addedLines.add(i + 1);
 						evidence.push({ line: i + 1, text: lineText.trim() });
 					} else if (idQuery && lowerLine.includes('id=') && lowerLine.includes(idQuery)) {
+						addedLines.add(i + 1);
 						evidence.push({ line: i + 1, text: lineText.trim() });
 					}
 				} else if (isCss && selectorQuery && lowerLine.includes(selectorQuery)) {
+					addedLines.add(i + 1);
 					evidence.push({ line: i + 1, text: lineText.trim() });
 				}
 				if (evidence.length >= 6) {
@@ -774,7 +804,7 @@ function buildNextResponse(
 			if (evidence.length >= 6) {
 				break;
 			}
-			if (keywords.some(keyword => lowerLine.includes(keyword))) {
+			if (!addedLines.has(i + 1) && keywords.some(keyword => lowerLine.includes(keyword))) {
 				evidence.push({ line: i + 1, text: lineText.trim() });
 			}
 		}
@@ -1108,21 +1138,3 @@ function escapeHtml(value: string): string {
 		.replace(/'/g, '&#39;');
 }
 
-function parseLineRange(input: string, maxLines: number): { start: number; end: number } | null {
-	const match = input.trim().match(/^(\d+)(?:\s*-\s*(\d+))?$/);
-	if (!match) {
-		return null;
-	}
-
-	const start = Math.max(1, Number(match[1]));
-	const end = Math.max(start, Number(match[2] ?? match[1]));
-
-	if (start > maxLines) {
-		return null;
-	}
-
-	return {
-		start: start - 1,
-		end: Math.min(end, maxLines) - 1
-	};
-}
