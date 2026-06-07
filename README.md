@@ -13,11 +13,11 @@ Codebase Guide helps vibe coders learn unfamiliar projects without overwriting f
 
 ## Commands
 
-- Codebase Guide: Start
+- Codebase Guide: Start (`Ctrl+Shift+G` / `Cmd+Shift+G`)
 
 ## Usage
 
-1. Run "Codebase Guide: Start" to open the guide panel.
+1. Run "Codebase Guide: Start" (or press `Ctrl+Shift+G` / `Cmd+Shift+G`) to open the guide panel.
 2. Select a file from suggestions or the file list.
 3. Review the file summary — click function names to jump to their lines.
 4. Ask a question to highlight relevant lines in the editor.
