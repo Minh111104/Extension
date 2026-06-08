@@ -144,7 +144,19 @@ async function updateGuidePanel(panel: vscode.WebviewPanel): Promise<void> {
 	const nextSuggestions = currentLearnedUri
 		? await buildNextSuggestions(currentLearnedUri, suggestions, walkthroughSteps)
 		: [];
-	panel.webview.html = getGuideHtml(suggestions, frameworks, allFiles, walkthroughSteps, currentSummary, nextResponse, nextSuggestions);
+
+	const stepsWithTarget = walkthroughSteps.filter(s => s.target !== undefined);
+	const learnedStepCount = stepsWithTarget.filter(s => learnedFiles.has(s.target!.fsPath)).length;
+	const learnedFsPath = currentLearnedUri?.fsPath;
+	const currentStepInfo = learnedFsPath
+		? walkthroughSteps.find(s => s.target?.fsPath === learnedFsPath)
+		: undefined;
+
+	panel.webview.html = getGuideHtml(
+		suggestions, frameworks, allFiles, walkthroughSteps,
+		currentSummary, nextResponse, nextSuggestions,
+		learnedStepCount, stepsWithTarget.length, currentStepInfo
+	);
 }
 
 async function buildGuideSuggestions(): Promise<GuideSuggestion[]> {
@@ -288,7 +300,10 @@ function getGuideHtml(
 	walkthroughSteps: Array<{ title: string; details: string; target?: vscode.Uri }>,
 	summary: SummaryInfo | undefined,
 	response: NextResponse | undefined,
-	nextSuggestions: NextSuggestion[]
+	nextSuggestions: NextSuggestion[],
+	learnedStepCount: number,
+	totalSteps: number,
+	currentStepInfo: { title: string; details: string; target?: vscode.Uri } | undefined
 ): string {
 	const frameworkLine = frameworks.length
 		? `<p class="frameworks">Detected: ${frameworks.map(escapeHtml).join(', ')}</p>`
@@ -788,12 +803,18 @@ function analyzeDocument(doc: vscode.TextDocument): SummaryInfo {
 	};
 }
 
+function getLineContext(doc: vscode.TextDocument, i: number): string[] {
+	const before = i > 0 ? doc.lineAt(i - 1).text.trim() : '';
+	const after = i + 1 < doc.lineCount ? doc.lineAt(i + 1).text.trim() : '';
+	return [before, after];
+}
+
 function buildNextResponse(
 	question: string,
 	doc: vscode.TextDocument | undefined,
 	current: SummaryInfo | undefined
 ): NextResponse {
-	const evidence: Array<{ line: number; text: string }> = [];
+	const evidence: Array<{ line: number; text: string; context: string[] }> = [];
 	const normalized = question.toLowerCase();
 	const isHtml = doc?.languageId === 'html' || doc?.fileName.toLowerCase().endsWith('.html');
 	const isCss = doc?.languageId === 'css' || doc?.fileName.toLowerCase().endsWith('.css');
@@ -817,14 +838,14 @@ function buildNextResponse(
 				if (isHtml) {
 					if (classQuery && lowerLine.includes('class=') && lowerLine.includes(classQuery)) {
 						addedLines.add(i + 1);
-						evidence.push({ line: i + 1, text: lineText.trim() });
+						evidence.push({ line: i + 1, text: lineText.trim(), context: getLineContext(doc, i) });
 					} else if (idQuery && lowerLine.includes('id=') && lowerLine.includes(idQuery)) {
 						addedLines.add(i + 1);
-						evidence.push({ line: i + 1, text: lineText.trim() });
+						evidence.push({ line: i + 1, text: lineText.trim(), context: getLineContext(doc, i) });
 					}
 				} else if (isCss && selectorQuery && lowerLine.includes(selectorQuery)) {
 					addedLines.add(i + 1);
-					evidence.push({ line: i + 1, text: lineText.trim() });
+					evidence.push({ line: i + 1, text: lineText.trim(), context: getLineContext(doc, i) });
 				}
 				if (evidence.length >= 6) {
 					break;
@@ -839,7 +860,7 @@ function buildNextResponse(
 				break;
 			}
 			if (!addedLines.has(i + 1) && keywords.some(keyword => lowerLine.includes(keyword))) {
-				evidence.push({ line: i + 1, text: lineText.trim() });
+				evidence.push({ line: i + 1, text: lineText.trim(), context: getLineContext(doc, i) });
 			}
 		}
 	}
