@@ -18,12 +18,13 @@ type SummaryInfo = {
 	headings: string[];
 	exports: string[];
 	functions: Array<{ name: string; line: number }>;
+	purposeHint: string | undefined;
 };
 
 type NextResponse = {
 	question: string;
 	message: string;
-	evidence: Array<{ line: number; text: string }>;
+	evidence: Array<{ line: number; text: string; context: string[] }>;
 };
 
 type NextSuggestion = {
@@ -700,6 +701,37 @@ async function learnFile(filePath: string): Promise<void> {
 	}
 }
 
+function inferFilePurpose(relativePath: string): string | undefined {
+	const lower = relativePath.toLowerCase();
+	const base = lower.split('/').pop()?.split('\\').pop() ?? '';
+	if (base === 'readme.md' || base === 'readme') { return 'Project documentation and overview'; }
+	if (base === 'package.json') { return 'Package scripts, dependencies, and entry points'; }
+	if (base === 'tsconfig.json') { return 'TypeScript compiler configuration'; }
+	if (base === 'vite.config.ts' || base === 'vite.config.js' || base === 'vite.config.mjs') { return 'Vite bundler configuration'; }
+	if (base.startsWith('next.config.')) { return 'Next.js framework configuration'; }
+	if (base.startsWith('tailwind.config.')) { return 'Tailwind CSS configuration'; }
+	if (base.startsWith('eslint.config.') || base === '.eslintrc.js' || base === '.eslintrc.json') { return 'ESLint linting rules'; }
+	if (base === 'docker-compose.yml' || base === 'dockerfile') { return 'Container build and orchestration config'; }
+	if (base === 'go.mod') { return 'Go module definition and dependencies'; }
+	if (base === 'cargo.toml') { return 'Rust package and dependency configuration'; }
+	if (base === 'requirements.txt' || base === 'pyproject.toml') { return 'Python dependencies'; }
+	if (lower.includes('/routes/') || lower.includes('\\routes\\')) { return 'Route definitions and URL mappings'; }
+	if (lower.includes('/controllers/') || lower.includes('\\controllers\\')) { return 'Request handlers and business logic'; }
+	if (lower.includes('/services/') || lower.includes('\\services\\')) { return 'Service layer and business operations'; }
+	if (lower.includes('/models/') || lower.includes('\\models\\')) { return 'Data model definitions'; }
+	if (lower.includes('/middleware/') || lower.includes('\\middleware\\')) { return 'HTTP middleware pipeline'; }
+	if (lower.includes('/hooks/') || lower.includes('\\hooks\\')) { return 'React hooks and reusable stateful logic'; }
+	if (lower.includes('/components/') || lower.includes('\\components\\')) { return 'UI component'; }
+	if (lower.includes('/pages/') || lower.includes('\\pages\\')) { return 'Page-level component or route'; }
+	if (lower.includes('/utils/') || lower.includes('/helpers/') || lower.includes('/lib/')) { return 'Utility functions and helpers'; }
+	if (base === 'index.ts' || base === 'index.js' || base === 'index.tsx' || base === 'index.jsx') { return 'Module entry point or barrel export'; }
+	if (base === 'main.ts' || base === 'main.js' || base === 'main.tsx' || base === 'main.jsx') { return 'Application entry point'; }
+	if (base === 'app.ts' || base === 'app.tsx' || base === 'app.vue' || base === 'app.js') { return 'Root application component or setup'; }
+	if (base === 'server.ts' || base === 'server.js') { return 'HTTP server bootstrap'; }
+	if (base.endsWith('.test.ts') || base.endsWith('.spec.ts') || base.endsWith('.test.js') || base.endsWith('.spec.js')) { return 'Test suite'; }
+	return undefined;
+}
+
 function analyzeDocument(doc: vscode.TextDocument): SummaryInfo {
 	const headings: string[] = [];
 	const exports: string[] = [];
@@ -744,13 +776,15 @@ function analyzeDocument(doc: vscode.TextDocument): SummaryInfo {
 		(item, index, array) => array.findIndex(entry => entry.name === item.name) === index
 	);
 
+	const relativePath = vscode.workspace.asRelativePath(doc.uri);
 	return {
 		filePath: doc.uri.fsPath,
-		relativePath: vscode.workspace.asRelativePath(doc.uri),
+		relativePath,
 		lineCount: doc.lineCount,
 		headings,
 		exports: uniqueExports,
-		functions: uniqueFunctions
+		functions: uniqueFunctions,
+		purposeHint: inferFilePurpose(relativePath)
 	};
 }
 
