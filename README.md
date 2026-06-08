@@ -23,9 +23,24 @@ Codebase Guide helps vibe coders learn unfamiliar projects without overwriting f
 4. Ask a question to highlight relevant lines in the editor.
 5. Follow "Explore Next" suggestions to continue learning the codebase.
 
+## Architecture
+
+All extension logic lives in a single file: `src/extension.ts`. It's organized into a few functional areas:
+
+- **Activation** — `activate()` registers the `codebase-guide.start` command.
+- **Panel UI** — `openGuidePanel()`, `updateGuidePanel()`, `getGuideHtml()` create and update the webview panel (string-templated HTML, no bundler or UI framework).
+- **File discovery** — `buildGuideSuggestions()`, `buildAllFilesList()` scan the workspace for key files (README, package.json, language entry points) and build the browsable file list (capped at 2000 files).
+- **Analysis** — `analyzeDocument()`, `learnFile()` extract headings, exports, and functions from a file.
+- **Framework detection** — `detectFrameworks()`, `buildWalkthroughSteps()` identify frameworks from `package.json` and config files, and generate adaptive onboarding steps.
+- **Q&A** — `buildNextResponse()`, `extractNamedQuery()` match questions to relevant code lines for highlighting.
+- **Import suggestions** — `buildNextSuggestions()` resolve relative imports and walkthrough steps into "Explore Next" suggestions.
+
+The webview communicates with the extension over four message commands: `learnFile`, `openFile`, `jumpToLine`, and `askNext`. The extension is read-only — it never modifies user files — and has no runtime dependencies beyond the VS Code API.
+
 ## Release Notes
 
 Initial preview with guidance panel and line highlighting.
 
 ## License
+
 This project is created for educational purpose.
