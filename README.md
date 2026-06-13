@@ -13,6 +13,7 @@ Codebase Guide helps vibe coders learn unfamiliar projects without overwriting f
 
 ## Commands
 
+- Click Run -> Start Debugging (`fn+F5`)
 - Codebase Guide: Start (`Ctrl+Shift+G` / `Cmd+Shift+G`)
 
 ## Usage
