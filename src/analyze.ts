@@ -94,6 +94,16 @@ function getLineContext(doc: vscode.TextDocument, i: number): string[] {
 	return [before, after];
 }
 
+function findEnclosingSymbol(functions: Array<{ name: string; line: number }>, line: number): string | undefined {
+	let best: { name: string; line: number } | undefined;
+	for (const fn of functions) {
+		if (fn.line <= line && (!best || fn.line > best.line)) {
+			best = fn;
+		}
+	}
+	return best?.name;
+}
+
 function extractNamedQuery(input: string, keyword: 'class' | 'id'): string | undefined {
 	const pattern = new RegExp(`${keyword}\\s*[:=]?\\s*['\"]?([a-zA-Z0-9_-]+)['\"]?`);
 	return input.match(pattern)?.[1];
@@ -104,7 +114,8 @@ export function buildNextResponse(
 	doc: vscode.TextDocument | undefined,
 	current: SummaryInfo | undefined
 ): NextResponse {
-	const evidence: Array<{ line: number; text: string; context: string[] }> = [];
+	const evidence: Array<{ line: number; text: string; context: string[]; enclosingSymbol: string | undefined }> = [];
+	const functions = current?.functions ?? [];
 	const normalized = question.toLowerCase();
 	const isHtml = doc?.languageId === 'html' || doc?.fileName.toLowerCase().endsWith('.html');
 	const isCss = doc?.languageId === 'css' || doc?.fileName.toLowerCase().endsWith('.css');
@@ -125,14 +136,14 @@ export function buildNextResponse(
 				if (isHtml) {
 					if (classQuery && lowerLine.includes('class=') && lowerLine.includes(classQuery)) {
 						addedLines.add(i + 1);
-						evidence.push({ line: i + 1, text: lineText.trim(), context: getLineContext(doc, i) });
+						evidence.push({ line: i + 1, text: lineText.trim(), context: getLineContext(doc, i), enclosingSymbol: findEnclosingSymbol(functions, i + 1) });
 					} else if (idQuery && lowerLine.includes('id=') && lowerLine.includes(idQuery)) {
 						addedLines.add(i + 1);
-						evidence.push({ line: i + 1, text: lineText.trim(), context: getLineContext(doc, i) });
+						evidence.push({ line: i + 1, text: lineText.trim(), context: getLineContext(doc, i), enclosingSymbol: findEnclosingSymbol(functions, i + 1) });
 					}
 				} else if (isCss && selectorQuery && lowerLine.includes(selectorQuery)) {
 					addedLines.add(i + 1);
-					evidence.push({ line: i + 1, text: lineText.trim(), context: getLineContext(doc, i) });
+					evidence.push({ line: i + 1, text: lineText.trim(), context: getLineContext(doc, i), enclosingSymbol: findEnclosingSymbol(functions, i + 1) });
 				}
 				if (evidence.length >= 6) { break; }
 			}
@@ -143,7 +154,7 @@ export function buildNextResponse(
 			const lineText = doc.lineAt(i).text;
 			const lowerLine = lineText.toLowerCase();
 			if (!addedLines.has(i + 1) && keywords.some(kw => lowerLine.includes(kw))) {
-				evidence.push({ line: i + 1, text: lineText.trim(), context: getLineContext(doc, i) });
+				evidence.push({ line: i + 1, text: lineText.trim(), context: getLineContext(doc, i), enclosingSymbol: findEnclosingSymbol(functions, i + 1) });
 			}
 		}
 	}

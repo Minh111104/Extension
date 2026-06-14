@@ -70,7 +70,8 @@ export function getGuideHtml(
 									<li class="evidence-item">
 										<a class="fn-link evidence-anchor" href="#" data-path="${encodeURIComponent(summary.filePath)}" data-line="${item.line}">L${item.line}</a>
 										<div class="evidence-lines">
-											${item.context[0] ? `<div class="ctx-line">${escapeHtml(item.context[0])}</div>` : ''}
+											${item.enclosingSymbol ? `<div class="enclosing-symbol">Inside <code>${escapeHtml(item.enclosingSymbol)}</code></div>` : ''}
+										${item.context[0] ? `<div class="ctx-line">${escapeHtml(item.context[0])}</div>` : ''}
 											<div class="match-line">${escapeHtml(item.text)}</div>
 											${item.context[1] ? `<div class="ctx-line">${escapeHtml(item.context[1])}</div>` : ''}
 										</div>
@@ -202,6 +203,8 @@ export function getGuideHtml(
 				.evidence-item { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 10px; }
 				.evidence-anchor { white-space: nowrap; padding-top: 1px; }
 				.evidence-lines { flex: 1; }
+				.enclosing-symbol { font-size: 11px; opacity: 0.65; margin-bottom: 2px; }
+				.enclosing-symbol code { font-family: var(--vscode-editor-font-family, monospace); }
 				.ctx-line { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; opacity: 0.5; }
 				.match-line { font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; font-weight: 600; }
 

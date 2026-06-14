@@ -24,7 +24,7 @@ export type SummaryInfo = {
 export type NextResponse = {
 	question: string;
 	message: string;
-	evidence: Array<{ line: number; text: string; context: string[] }>;
+	evidence: Array<{ line: number; text: string; context: string[]; enclosingSymbol: string | undefined }>;
 };
 
 export type NextSuggestion = {
