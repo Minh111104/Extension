@@ -11,6 +11,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - Added "Reading goal" callouts describing what to look for in the current step
 - Added file purpose hints (e.g. "Route definitions and URL mappings") based on file path heuristics
 - Added surrounding context lines to Q&A evidence to make matches easier to understand
+- Q&A evidence now shows which function or class each matched line belongs to ("Inside `functionName`")
 - Split `extension.ts` into focused modules (`types`, `analyze`, `discover`, `walkthrough`, `webview`) for readability
 
 ## [Initial]
